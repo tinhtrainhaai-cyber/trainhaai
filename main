@@ -1,8 +1,8 @@
-// === FIREBASE IMPORTS (BẮT BUỘC Ở ĐẦU FILE) ===
+// === FIREBASE IMPORTS ===
 import { initializeApp, getApp, getApps } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
 import { getDatabase, ref, get, runTransaction } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-database.js";
 
-// 1. MÔ TẢ THU GỌN
+// --- 1. MÔ TẢ THU GỌN ---
 function initCollapsibleDescription() {
     try {
         const descriptionContainer = document.getElementById('noidung-target');
@@ -16,22 +16,177 @@ function initCollapsibleDescription() {
                 readMoreBtn.style.display = 'block';
             }
         }, 500);
-    } catch (e) { console.error("Lỗi khi khởi tạo mô tả thu gọn:", e); }
+    } catch (e) {}
 }
 window.toggleDescription = function(btn) {
     const descriptionContainer = document.getElementById('noidung-target');
     if (!descriptionContainer) return;
     descriptionContainer.classList.toggle('expanded');
-    if (descriptionContainer.classList.contains('expanded')) {
-        btn.textContent = 'Thu gọn';
+    btn.textContent = descriptionContainer.classList.contains('expanded') ? 'Thu gọn' : 'Đọc thêm';
+}
+
+// --- 2. THỜI GIAN & TIỆN ÍCH ---
+const CACHE = new Map();
+function getTimeAgo(dateString) {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return "Không xác định";
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const thatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.round((today - thatDay) / (1000 * 60 * 60 * 24));
+    const seconds = Math.floor((now - date) / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (diffDays < 7) {
+        if (seconds < 60) return `${seconds} giây trước`;
+        if (minutes < 60) return `${minutes} phút trước`;
+        if (hours < 24) return `${hours} giờ trước`;
+        return `${diffDays} ngày trước`;
     } else {
-        btn.textContent = 'Đọc thêm';
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
     }
 }
-document.addEventListener("DOMContentLoaded", initCollapsibleDescription);
+function updateAllTimeagoElements() {
+    document.querySelectorAll('time.timeago').forEach(el => {
+        const isoDate = el.getAttribute('datetime');
+        if (isoDate && !el.dataset.timeagoApplied) {
+            el.textContent = getTimeAgo(isoDate);
+            el.dataset.timeagoApplied = 'true';
+        }
+    });
+}
 
-// 2. TÌM KIẾM TRỰC TIẾP
-document.addEventListener('DOMContentLoaded', function() {
+// --- 3. MỤC LỤC TRUYỆN TRANH ---
+function filterChapters(e) {
+    const filterText = e.target.value.toLowerCase();
+    document.querySelectorAll('#post-list .chapter-item').forEach(item => {
+        const chapterTitle = item.querySelector('span:first-child').textContent.toLowerCase();
+        item.style.display = chapterTitle.includes(filterText) ? '' : 'none';
+    });
+}
+function createChapterManga() {
+    const labelEl = document.querySelector('.labelpostmanga');
+    if(!labelEl) return;
+    const labelSeries = labelEl.getAttribute('label');
+    const maxResults = 150;
+    let latestPostLink = '';
+    let oldestPostLink = '';
+
+    async function loadAllPosts(startIndex) {
+        try {
+            const response = await fetch(`/feeds/posts/summary/-/${encodeURIComponent(labelSeries)}?start-index=${startIndex}&max-results=${maxResults}`);
+            const data = await response.text();
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(data, 'text/html');
+            const entries = Array.from(xmlDoc.getElementsByTagName('entry'));
+
+            if (entries.length === 0) {
+                if (startIndex === 1) createNavigationButtons();
+                showSearchInput();
+                return;
+            }
+
+            let postsHTML = '';
+            entries.forEach((entry) => {
+                if (Array.from(entry.getElementsByTagName('category')).some(cat => cat.getAttribute('term') === 'Series')) return;
+                const title = entry.getElementsByTagName('title')[0].textContent;
+                const postLink = entry.querySelector('link[rel="alternate"]')?.getAttribute('href');
+                const published = entry.getElementsByTagName('published')[0].textContent;
+                postsHTML += `<div class="chapter-item"><a href="${postLink}"><span>${title}</span><span>${getTimeAgo(new Date(published))}</span></a></div>`;
+                if (!latestPostLink) latestPostLink = postLink;
+                oldestPostLink = postLink;
+            });
+            document.getElementById('post-list').insertAdjacentHTML('beforeend', postsHTML);
+            if (entries.length === maxResults) {
+                await loadAllPosts(startIndex + maxResults);
+            } else {
+                createNavigationButtons();
+                showSearchInput();
+            }
+        } catch (error) {}
+    }
+    function createNavigationButtons() {
+        const navDiv = document.getElementById('navigation-buttons');
+        if(!navDiv) return;
+        navDiv.innerHTML = '';
+        if (oldestPostLink) navDiv.innerHTML += `<a href="${oldestPostLink}" class="navigation-link">Đọc từ đầu</a>`;
+        if (latestPostLink) navDiv.innerHTML += `<a href="${latestPostLink}" class="navigation-link">Đọc mới nhất</a>`;
+    }
+    function showSearchInput() {
+        const searchContainer = document.getElementById('search-container');
+        if(!searchContainer) return;
+        searchContainer.innerHTML = `<input type="text" id="search-input" placeholder="Tìm kiếm chương..." />`;
+        document.getElementById('search-input').addEventListener('input', filterChapters);
+    }
+    loadAllPosts(1);
+}
+
+// --- 4. MỤC LỤC TRUYỆN CHỮ (NOVEL) ---
+async function fetchWithCache(url) {
+    if (CACHE.has(url)) return CACHE.get(url);
+    const response = await fetch(url, { headers: { 'Accept-Encoding': 'gzip, deflate, br' } });
+    if (!response.ok) throw new Error('Network error');
+    const data = await response.json();
+    CACHE.set(url, data);
+    return data;
+}
+async function getPosts(label, startIndex) {
+    const url = `/feeds/posts/default/-/${label}?alt=json&max-results=150&start-index=${startIndex}`;
+    const data = await fetchWithCache(url);
+    return data.feed.entry || [];
+}
+function containsSeriesLabel(post) { return post.category.map(c => c.term).includes('Series'); }
+async function createChapterLinksForNovelLabel(novelLabel) {
+    const labelValue = novelLabel.getAttribute('label');
+    if (novelLabel.dataset.loaded === 'true') return;
+    novelLabel.dataset.loaded = 'true';
+
+    const nameNovelDiv = document.createElement('div');
+    nameNovelDiv.className = 'name-novel';
+    nameNovelDiv.textContent = labelValue;
+    const optionNovel = novelLabel.querySelector('.img-novel');
+    novelLabel.insertBefore(nameNovelDiv, optionNovel);
+
+    const chapterNovel = document.createElement('div');
+    chapterNovel.className = 'chapter-novel';
+    optionNovel.appendChild(chapterNovel);
+
+    let startIndex = 1;
+    let hasMorePosts = true;
+    while (hasMorePosts) {
+        const posts = await getPosts(labelValue, startIndex);
+        const filteredPosts = posts.filter(post => !containsSeriesLabel(post));
+        if (filteredPosts.length === 0 && startIndex === 1) {
+            chapterNovel.innerHTML = '<p class="no-novel-post">Không có chương nào.</p>';
+            break;
+        }
+        const postElements = filteredPosts.map(post => {
+            const link = post.link.find(l => l.rel === 'alternate');
+            const chapterLink = document.createElement('a');
+            chapterLink.href = link ? link.href : '#';
+            chapterLink.innerHTML = `<span>${post.title.$t}</span><span>${getTimeAgo(post.published.$t)}</span>`;
+            return chapterLink;
+        });
+        postElements.forEach(el => chapterNovel.appendChild(el));
+        hasMorePosts = posts.length === 150;
+        startIndex += 150;
+    }
+}
+async function createChapterLinksForAllNovelLabels() {
+    const novelLabels = document.querySelectorAll('.novel-label');
+    if (novelLabels.length === 0) return;
+    const parentContainer = novelLabels[0].parentNode;
+    const reversedLabels = [...novelLabels].reverse();
+    reversedLabels.forEach(label => parentContainer.appendChild(label));
+    await Promise.all(reversedLabels.map(label => createChapterLinksForNovelLabel(label)));
+}
+
+// --- 5. TÌM KIẾM TRỰC TIẾP ---
+function initLiveSearch() {
     const searchInputs = document.querySelectorAll("input[name='q'][autocomplete='off']"); 
     const resultsContainer = document.getElementById('live-search-results');
     if (searchInputs.length === 0 || !resultsContainer) return;
@@ -44,27 +199,20 @@ document.addEventListener('DOMContentLoaded', function() {
         isFetching = true;
         try {
             const response = await fetch('/feeds/posts/summary/-/Series?alt=json&max-results=500');
-            if (!response.ok) throw new Error('Network response was not ok.');
             const data = await response.json();
             allPostsCache = (data.feed.entry || []).map(entry => ({
                 title: entry.title.$t,
                 link: (entry.link.find(l => l.rel === 'alternate') || {}).href,
                 thumbnail: (entry.media$thumbnail ? entry.media$thumbnail.url.replace('/s72-c/', '/w72-h100-c/') : 'https://1.bp.blogspot.com/-_T_t_3FdbHw/Xo-L5qf_ACI/AAAAAAAABwE/f-w-U-b3IqYV1wGchPZgPA_h0w90y3Y4gCLcBGAsYHQ/s1600/no-image.png')
             }));
-        } catch (error) {
-            console.error("Lỗi khi tải danh sách truyện:", error);
-            allPostsCache = [];
-        } finally {
-            isFetching = false;
-        }
+        } catch (error) {} finally { isFetching = false; }
     }
 
     function renderResults(posts, query) {
         resultsContainer.innerHTML = '';
         if (!posts || posts.length === 0) {
             resultsContainer.innerHTML = `<div class="no-results">Không tìm thấy kết quả cho "${query}"</div>`;
-            resultsContainer.style.display = 'block';
-            return;
+            resultsContainer.style.display = 'block'; return;
         }
         const ul = document.createElement('ul');
         posts.slice(0, 7).forEach(post => {
@@ -76,57 +224,37 @@ document.addEventListener('DOMContentLoaded', function() {
         resultsContainer.style.display = 'block';
     }
 
-    function handleSearch(event) {
-        clearTimeout(debounceTimer); 
-        const query = event.target.value.toLowerCase().trim();
-        if (query.length < 2) {
-            resultsContainer.style.display = 'none';
-            return;
-        }
-        debounceTimer = setTimeout(() => {
-            const filteredPosts = allPostsCache.filter(post => post.title.toLowerCase().includes(query));
-            renderResults(filteredPosts, query);
-        }, 300);
-    }
-
     searchInputs.forEach(input => { 
-        input.addEventListener('keyup', handleSearch);
+        input.addEventListener('keyup', (e) => {
+            clearTimeout(debounceTimer); 
+            const query = e.target.value.toLowerCase().trim();
+            if (query.length < 2) { resultsContainer.style.display = 'none'; return; }
+            debounceTimer = setTimeout(() => {
+                renderResults(allPostsCache.filter(post => post.title.toLowerCase().includes(query)), query);
+            }, 300);
+        });
         input.addEventListener('focus', fetchAllPosts);
         input.addEventListener('focus', function() {
-            if (this.closest('#mobile-search-overlay')) {
-                this.closest('.search-box-container').appendChild(resultsContainer);
-            } else {
-                this.closest('div[role="search"]').appendChild(resultsContainer);
-            }
-            if (this.value.length >= 2 && resultsContainer.innerHTML !== '') {
-                resultsContainer.style.display = 'block';
-            }
+            if (this.closest('#mobile-search-overlay')) this.closest('.search-box-container').appendChild(resultsContainer);
+            else this.closest('div[role="search"]').appendChild(resultsContainer);
+            if (this.value.length >= 2 && resultsContainer.innerHTML !== '') resultsContainer.style.display = 'block';
         });
     });
+    document.addEventListener('click', e => { if (!e.target.closest('.search-box-container, div[role="search"]')) resultsContainer.style.display = 'none'; });
+}
 
-    document.addEventListener('click', function(e) {
-        if (!e.target.closest('.search-box-container, div[role="search"]')) {
-            resultsContainer.style.display = 'none';
-        }
-    });
-});
-
-// 3. SỬA LỖI GIAO DIỆN & TIÊU ĐỀ
-document.addEventListener("DOMContentLoaded", function() {
+// --- 6. SỬA GIAO DIỆN & TẠO LINK #EXTRA-INFO ---
+function fixUIAndExtraInfo() {
     const noiDungElement = document.getElementById("noidung");
     if (noiDungElement) {
-        const noiDungText = noiDungElement.innerHTML;
         const synTargetElement = document.getElementById("noidung-target");
-        if (synTargetElement) synTargetElement.innerHTML = noiDungText;
+        if (synTargetElement) synTargetElement.innerHTML = noiDungElement.innerHTML;
     }
     const tenKhacElement = document.getElementById("tenkhac");
     const tenKhacTargetElement = document.getElementById("tenkhac-target");
     if (tenKhacElement && tenKhacTargetElement) {
         const tenKhacParts = tenKhacElement.textContent.split(/[,;]/);
-        tenKhacTargetElement.innerHTML = tenKhacParts.map((part, index) => {
-            const trimmedPart = part.trim();
-            return `<span itemprop="workTitle">${trimmedPart}</span>${index !== tenKhacParts.length - 1 ? (index === 0 ? ',' : ';') : ''}`;
-        }).join('');
+        tenKhacTargetElement.innerHTML = tenKhacParts.map((p, i) => `<span itemprop="workTitle">${p.trim()}</span>${i !== tenKhacParts.length - 1 ? (i === 0 ? ',' : ';') : ''}`).join('');
     }
 
     const extraInfoElement = document.getElementById('extra-info');
@@ -137,27 +265,18 @@ document.addEventListener("DOMContentLoaded", function() {
         const asideContainer = extraTargetElement.closest('aside.s1');
         const originalComplexRow = extraTargetElement.parentElement;
         if (asideContainer && originalComplexRow) {
-            const infoRows = extraInfoElement.querySelectorAll(".y6x11p");
-            infoRows.forEach(row => {
-                const valueElement = row.querySelector(".dt");
+            extraInfoElement.querySelectorAll(".y6x11p").forEach(row => {
                 const keyElement = row.childNodes[0];
+                const valueElement = row.querySelector(".dt");
                 if (keyElement && valueElement) {
-                    const keyText = keyElement.textContent.trim().toLowerCase();
+                    const keyText = keyElement.textContent.trim();
                     const valueText = valueElement.textContent.trim();
-                    if (keyText && valueText) {
-                        let searchLabel = '';
-                        if (keyText === 'tác giả') searchLabel = 'Authors: ' + valueText;
-                        else if (keyText === 'họa sĩ') searchLabel = 'Artists: ' + valueText;
-                        if (searchLabel) {
-                            const searchUrl = `/search/label/${encodeURIComponent(searchLabel)}`;
-                            valueElement.innerHTML = `<a href="${searchUrl}">${valueText}</a>`;
-                        }
-                    }
+                    const searchLabel = keyText.toLowerCase() === 'tác giả' ? 'Authors: ' + valueText : (keyText.toLowerCase() === 'họa sĩ' ? 'Artists: ' + valueText : '');
+                    valueElement.innerHTML = searchLabel ? `<a href="/search/label/${encodeURIComponent(searchLabel)}">${valueText}</a>` : `<a href="/search?q=${encodeURIComponent(valueText)}&text=${encodeURIComponent(keyText)}">${valueText}</a>`;
                 }
             });
-            Array.from(extraInfoElement.children).forEach(row => {
-                asideContainer.insertBefore(row, originalComplexRow);
-            });
+            Array.from(extraInfoElement.children).forEach(row => asideContainer.insertBefore(row, originalComplexRow));
+            
             const dataId = viewpostElement.getAttribute('data-id');
             const dataHref = viewpostElement.getAttribute('data-href');
             const namePost = viewpostElement.getAttribute('name-post');
@@ -165,120 +284,38 @@ document.addEventListener("DOMContentLoaded", function() {
             if (dataId) originalComplexRow.setAttribute('data-id', dataId);
             if (dataHref) originalComplexRow.setAttribute('data-href', dataHref);
             if (namePost) originalComplexRow.setAttribute('name-post', namePost);
-            while (viewpostElement.firstChild) {
-                originalComplexRow.appendChild(viewpostElement.firstChild);
-            }
+            
+            while (viewpostElement.firstChild) originalComplexRow.appendChild(viewpostElement.firstChild);
             viewpostElement.remove();
             extraTargetElement.remove();
             extraInfoElement.remove();
         }
     }
-
-    const sourceDiv = document.getElementById('custom-warning-blue-content');
-    const placeholderDiv = document.getElementById('custom-warning-blue-placeholder');
-    if (sourceDiv && placeholderDiv) {
-        const userContent = sourceDiv.innerHTML;
-        const svgIcon = `<svg viewBox="0 0 24 24" style="width: 24px; height: 24px; margin-right: 12px; flex-shrink: 0;"><path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z" fill="currentColor"></path></svg>`;
-        placeholderDiv.innerHTML = svgIcon + '<p class="m-0" style="line-height: 1.5;">' + userContent + '</p>';
-        placeholderDiv.classList.add('warning-box', 'warning-box-post-blue');
-        placeholderDiv.style.display = 'flex';
-    }
-
-    if (document.querySelector('.novel-label')) { 
-        if(typeof createChapterLinksForAllNovelLabels === 'function') createChapterLinksForAllNovelLabels();
-    } else if (document.querySelector('.labelpostmanga')) {
-        if(typeof createChapterManga === 'function') createChapterManga();
-    }
-});
-
-// 4. TIME AGO
-function initializeTimeAgo() {
-    function formatTimeAgo(isoDateString) {
-        const now = new Date(); 
-        const past = new Date(isoDateString);
-        const seconds = Math.floor((now - past) / 1000);
-        if (seconds < 60) return `${seconds <= 0 ? 0 : seconds} giây trước`;
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return `${minutes} phút trước`;
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours} giờ trước`;
-        const days = Math.floor(hours / 24);
-        if (days < 30) return `${days} ngày trước`;
-        const months = Math.floor(days / 30);
-        if (months < 12) return `${months} tháng trước`;
-        const years = Math.floor(days / 365);
-        return `${years} năm trước`;
-    }
-    function updateAllTimeagoElements() {
-        const timeElements = document.querySelectorAll('time.timeago');
-        timeElements.forEach(el => {
-            const isoDate = el.getAttribute('datetime');
-            if (isoDate && !el.dataset.timeagoApplied) {
-                el.textContent = formatTimeAgo(isoDate);
-                el.dataset.timeagoApplied = 'true';
-            }
-        });
-    }
-    updateAllTimeagoElements();
-    const observer = new MutationObserver(function() { updateAllTimeagoElements(); });
-    observer.observe(document.body, { childList: true, subtree: true });
 }
-document.addEventListener('DOMContentLoaded', initializeTimeAgo);
 
-// 5. TẠO LINK #EXTRA-INFO
-window.addEventListener("DOMContentLoaded", function() {
-  const extraInfoDiv = document.getElementById("extra-info");
-  if (extraInfoDiv) {
-    const infoRows = extraInfoDiv.querySelectorAll(".y6x11p");
-    infoRows.forEach(row => {
-      const keyElement = row.childNodes[0];
-      const valueElement = row.querySelector(".dt");
-      if (keyElement && valueElement) {
-        const keyText = keyElement.textContent.trim();
-        const valueText = valueElement.textContent.trim();
-        const searchUrl = `/search?q=${encodeURIComponent(valueText)}&text=${encodeURIComponent(keyText)}`;
-        valueElement.innerHTML = `<a href="${searchUrl}">${valueText}</a>`;
-      }
-    });
-  }
-});
-
-// 6. VIEW COUNT & POPULAR POSTS
+// --- 7. FIREBASE & VIEW COUNT ---
 let db_rtdb; 
 let firebaseApp;
 function safeInitializeFirebase() {
     try {
         const configElement = document.querySelector('.firebase-config-json');
-        if (!configElement) throw new Error("Không tìm thấy widget cấu hình Firebase (.firebase-config-json).");
-        const configText = configElement.textContent.trim();
-        if (!configText || configText === '{}') throw new Error("Nội dung cấu hình Firebase trống.");
-        const firebaseConfig = JSON.parse(configText);
-
-        if (!getApps().length) {
-            firebaseApp = initializeApp(firebaseConfig);
-        } else {
-            firebaseApp = getApp();
-        }
+        if (!configElement) throw new Error("Missing config.");
+        const firebaseConfig = JSON.parse(configElement.textContent.trim());
+        firebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
         db_rtdb = getDatabase(firebaseApp); 
         return true;
     } catch (e) {
         document.querySelectorAll(".view-count").forEach(el => el.textContent = 'Lỗi FB');
-        const popularContainer = document.getElementById('popular-posts-container');
-        if (popularContainer) popularContainer.innerHTML = `<article class='p-y12x15' style='color:red;'>Lỗi khởi tạo Firebase.</article>`;
         return false;
     }
 }
-function formatViewsCount(count) {
-    if (isNaN(count) || count === null) return "0";
-    return parseInt(count).toLocaleString('vi-VN');
-}
+function formatViewsCount(count) { return (isNaN(count) || count === null) ? "0" : parseInt(count).toLocaleString('vi-VN'); }
+
 async function handleViewPost() {
     const viewElement = document.querySelector(".viewpost");
     if (!viewElement || !db_rtdb) return;
     const postId = viewElement.getAttribute("data-id");
     if (!postId) return;
-
-    // Fix lỗi spam f5 tăng view: Lưu localStorage
     const viewedPosts = JSON.parse(sessionStorage.getItem('viewedPosts') || '[]');
     const countElement = viewElement.querySelector(".view-count");
     const postRef = ref(db_rtdb, `views/${postId}`);
@@ -288,17 +325,13 @@ async function handleViewPost() {
             await runTransaction(postRef, (currentData) => (currentData || 0) + 1);
             viewedPosts.push(postId);
             sessionStorage.setItem('viewedPosts', JSON.stringify(viewedPosts));
-        } catch (error) { console.error("Lỗi cập nhật view:", error); }
+        } catch (e) {}
     }
-    
     try {
         const snapshot = await get(postRef);
         const viewCount = snapshot.val() || 1;
-        if(countElement) {
-            countElement.textContent = formatViewsCount(viewCount);
-            countElement.setAttribute("title", String(viewCount));
-        }
-    } catch (error) { if(countElement) countElement.textContent = 'Lỗi'; }
+        if(countElement) { countElement.textContent = formatViewsCount(viewCount); countElement.setAttribute("title", String(viewCount)); }
+    } catch (e) { if(countElement) countElement.textContent = 'Lỗi'; }
 }
 
 async function handleViewAll() {
@@ -313,60 +346,38 @@ async function handleViewAll() {
             if(!postId) return;
             const viewCount = allViews[postId] || 0;
             const countElement = element.querySelector(".view-count");
-            if (countElement) {
-                countElement.textContent = formatViewsCount(viewCount);
-                countElement.setAttribute("title", String(viewCount));
-            }
+            if (countElement) { countElement.textContent = formatViewsCount(viewCount); countElement.setAttribute("title", String(viewCount)); }
         });
-    } catch (error) {
-         viewElements.forEach(element => {
-              const countElement = element.querySelector(".view-count");
-              if (countElement) countElement.textContent = 'Lỗi';
-         });
-    }
+    } catch (e) {}
 }
+
 async function renderPopularPostsFromFirebase() {
     const container = document.getElementById('popular-posts-container');
     if (!container || !db_rtdb) return;
-    function extractFirstImage(content) {
-         if (!content) return null;
-         const match = content.match(/<img[^>]+src="([^">]+)"/);
-         return match ? match[1] : null;
-     }
     const allAllowedGenres = new Set(["ABO","Dị năng","Niên hạ","Crime","Cổ trang","18+","Oneshot","Ngược","Giải trí","Tận thế","Lãng mạn","Học đường","Philosophical","Kì ảo","Yêu hận","Châu âu","Xuyên không","Tâm lý","Giang hồ","Nhân thú","Superhero","Hối hận","Trùng sinh","Chủ nợ","Yaoi","Yuri","Hiện đại","Trả thù","Hài hước","Adaptation","NP","Boylove","Loli","Mafia","Kinh dị","Trinh thám","Reincarnation","Reverse Harem","Samurai","Đoản văn","Tu tiên","Giam cầm","Survival","Time Travel","Chiếm hữu","Video Games","Demon","Monsters","Đam mỹ","Virtual Reality","Demons","Monster Girls","Monsters","Police","Tình tay 3","Hệ thống"]);
-    const soBaiVietHienThi = 10;
     try {
         container.innerHTML = `<article class='p-y12x15' style='text-align: center;'><div class='loader'></div></article>`;
         const viewsSnapshot = await get(ref(db_rtdb, 'views'));
         const viewsData = viewsSnapshot.val() || {};
         const postsResponse = await fetch('/feeds/posts/default/-/Series?alt=json&max-results=999');
-        if (!postsResponse.ok) throw new Error("Lỗi khi tải danh sách truyện từ blog.");
         const postsData = await postsResponse.json();
-        const allPosts = postsData.feed.entry || [];
-        const combinedData = allPosts.map(post => {
+        const combinedData = (postsData.feed.entry || []).map(post => {
             const postIdMatch = post.id.$t.match(/post-(\d+)/);
             if (!postIdMatch) return null;
             const postId = postIdMatch[1];
-            const content = post.content ? post.content.$t : '';
-            const firstImageFromContent = extractFirstImage(content);
             return {
                 id: postId,
                 title: post.title.$t,
                 url: (post.link.find(l => l.rel === 'alternate') || {}).href,
-                thumbnail: (post.media$thumbnail)
-                    ? post.media$thumbnail.url.replace('/s72-c/', '/w58-h76-c/')
-                    : (firstImageFromContent ? firstImageFromContent : 'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEixU5Y2M-2Q427Yl2sLyTe9N22M-k2-i60P-5-C2b-a-I7g-g-I-A/s1600/no-thumbnail.jpg'),
+                thumbnail: (post.media$thumbnail) ? post.media$thumbnail.url.replace('/s72-c/', '/w58-h76-c/') : 'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEixU5Y2M-2Q427Yl2sLyTe9N22M-k2-i60P-5-C2b-a-I7g-g-I-A/s1600/no-thumbnail.jpg',
                 labels: post.category ? post.category.map(c => c.term) : [],
                 viewCount: viewsData[postId] || 0
             };
         }).filter(item => item !== null);
 
         combinedData.sort((a, b) => b.viewCount - a.viewCount);
-        const topPosts = combinedData.slice(0, soBaiVietHienThi);
-        if (topPosts.length === 0) {
-            container.innerHTML = `<article class='p-y12x15'>Chưa có dữ liệu lượt xem cho bài viết nào.</article>`;
-            return;
-        }
+        const topPosts = combinedData.slice(0, 10);
+        if (topPosts.length === 0) { container.innerHTML = `<article class='p-y12x15'>Chưa có dữ liệu.</article>`; return; }
 
         let finalHTML = '';
         topPosts.forEach((post, index) => {
@@ -374,388 +385,72 @@ async function renderPopularPostsFromFirebase() {
             finalHTML += `
                 <article class='p-y12x15 grid gtc-3c bb-1pxsf' role='article'>
                     <div class='grid pcc'><div class='w-25 h25 tac lh-25px r2f'>${index + 1}</div></div>
-                    <div class='item-thumbnail'><a aria-label='${post.title}' href='${post.url}' title='${post.title}'><img alt='${post.title}' class='lazyload' data-src='${post.thumbnail}' style='width:58px; height:75.85px; object-fit:cover; border-radius:2px;' loading='lazy'/></a></div>
+                    <div class='item-thumbnail'><a aria-label='${post.title}' href='${post.url}'><img alt='${post.title}' class='lazyload' data-src='${post.thumbnail}' style='width:58px; height:75.85px; object-fit:cover; border-radius:2px;' loading='lazy'/></a></div>
                     <div>
                         <h3 class='post-title m-0 fs-13'><a class='clamp2' href='${post.url}'><strong>${post.title}</strong></a></h3>
                         <span class='span-spc fs-13' style="display: block; -webkit-line-clamp: 1;">${genres || ' '}</span>
-                         <div class='fs-12 popularview' style='margin-top: 2px;'><span class='carbon--view-filled'></span><span class='view-count' title='${post.viewCount}'>${formatViewsCount(post.viewCount)}</span></div>
+                        <div class='fs-12 popularview' style='margin-top: 2px;'><span class='carbon--view-filled'></span><span class='view-count' title='${post.viewCount}'>${formatViewsCount(post.viewCount)}</span></div>
                     </div>
                 </article>`;
         });
         container.innerHTML = finalHTML;
-    } catch (error) { container.innerHTML = `<article class='p-y12x15' style='color:red;'>Lỗi tải danh sách phổ biến.</article>`; }
+    } catch (e) { container.innerHTML = `<article class='p-y12x15' style='color:red;'>Lỗi tải danh sách phổ biến.</article>`; }
 }
-function setupTabs() {
-    const tabs = document.querySelectorAll(".tabx span");
-    if(tabs.length === 0) return;
-    const defaultTab = tabs[0];
-    tabs.forEach(tab => {
-        tab.addEventListener("click", function() {
-            if (this.classList.contains('active')) return;
-            tabs.forEach(t => t.classList.remove("active"));
-            this.classList.add("active");
-            renderPopularPostsFromFirebase();
-        });
-    });
-    if (defaultTab && !document.querySelector(".tabx span.active")) {
-         tabs.forEach(t => t.classList.remove("active"));
-         defaultTab.classList.add('active');
-    }
-}
+
 function activateViewCounterAndPopular() {
-    if (!db_rtdb) { setTimeout(activateViewCounterAndPopular, 200); return; }
+    if (!db_rtdb) return;
     const isPostPage = document.body.classList.contains('pv');
     const isReadingPage = document.querySelector(".check-box, .novel-box");
     if (isPostPage && !isReadingPage) handleViewPost();
     handleViewAll();
+    
     const mainContainers = document.querySelectorAll("#mainnnv, #results, #popular-posts-container");
     if(mainContainers.length > 0) {
         const observer = new MutationObserver((mutations) => {
-             let needsUpdate = false;
              for (const mutation of mutations) {
-                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) { needsUpdate = true; break; }
+                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) { handleViewAll(); break; }
              }
-             if(needsUpdate) handleViewAll();
         });
-        mainContainers.forEach(container => { observer.observe(container, { childList: true, subtree: true }); });
+        mainContainers.forEach(container => observer.observe(container, { childList: true, subtree: true }));
     }
-    const isHomepage = window.location.pathname === '/';
-    if(isHomepage) { renderPopularPostsFromFirebase(); setupTabs(); }
-}
-if (safeInitializeFirebase()) { document.addEventListener('DOMContentLoaded', activateViewCounterAndPopular); }
-
-// 7. FIREBASE BÌNH LUẬN & AUTH
-window.insertAtCursor = function(myField, myValue) {
-    if (document.selection) {
-        myField.focus();
-        let sel = document.selection.createRange();
-        sel.text = myValue;
-    } else if (myField.selectionStart || myField.selectionStart == '0') {
-        let startPos = myField.selectionStart;
-        let endPos = myField.selectionEnd;
-        myField.value = myField.value.substring(0, startPos) + myValue + myField.value.substring(endPos, myField.value.length);
-        myField.selectionStart = myField.selectionEnd = startPos + myValue.length;
-    } else {
-        myField.value += myValue;
-    }
-}
-try {
-    const configEl = document.querySelector('.firebase-config-json');
-    if(configEl && configEl.textContent) {
-        const firebaseConfig = JSON.parse(configEl.textContent);
-        // Note: Firebase is initialized using compat in the template for comments.
-        if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
-        const auth = firebase.auth();
-        const db = firebase.firestore();
-
-        let adminUID = '';
-        const uidWidget = document.getElementById('HTML777');
-        if (uidWidget) {
-            const widgetContent = uidWidget.querySelector('.widget-content');
-            if(widgetContent) adminUID = widgetContent.textContent.trim();
-        }
-
-        if (document.body.classList.contains('pv') || document.body.classList.contains('chapter-layout') || document.body.classList.contains('novel-layout') || document.body.classList.contains('video-layout')) { 
-            document.addEventListener('DOMContentLoaded', function() {
-                const postElement = document.querySelector('[data-id]');
-                if (!postElement) return;
-                const postId = postElement.getAttribute('data-id');
-                const commentContainer = document.getElementById('firebase-comments-container');
-                if (!commentContainer) return;
-                
-                const userBox = commentContainer.querySelector('[id^="comment-user-info"]');
-                const commentForm = commentContainer.querySelector('#comment-form');
-                const commentInput = commentContainer.querySelector('#comment-input');
-                const commentsList = commentContainer.querySelector('#comments-list');
-                const logoutBtn = userBox ? userBox.querySelector('button') : null;
-                const userAvatar = userBox ? userBox.querySelector('img') : null;
-                const userName = userBox ? userBox.querySelector('span') : null;
-                const commentCount = commentContainer.querySelector('#comment-count');
-                const submitBtn = commentContainer.querySelector('#comment-submit-btn');
-                const sortNewestBtn = commentContainer.querySelector('#sort-newest');
-                const sortOldestBtn = commentContainer.querySelector('#sort-oldest');
-                const replyFormWrapper = commentContainer.querySelector('#reply-form-wrapper');
-                const replyForm = commentContainer.querySelector('#reply-form');
-                const replyInput = commentContainer.querySelector('#reply-input');
-                const cancelReplyBtn = commentContainer.querySelector('#cancel-reply-btn');
-                const iconsPanel = commentContainer.querySelector('#comment-icons-panel');
-
-                if(iconsPanel) {
-                    iconsPanel.addEventListener('click', (e) => {
-                        if (e.target.classList.contains('comment-icon')) {
-                            const markdown = e.target.getAttribute('data-markdown');
-                            const activeTextarea = (replyFormWrapper.style.display === 'block') ? replyInput : commentInput;
-                            insertAtCursor(activeTextarea, ` ${markdown} `);
-                            activeTextarea.focus();
-                        }
-                    });
-                }
-                
-                const commentsRef = db.collection('comments');
-                let lastVisible = null;
-                const commentsPerPage = 5;
-                let currentSortOrder = 'desc';
-
-                auth.onAuthStateChanged(user => {
-                    if (user) {
-                        if (userBox) userBox.style.display = 'flex';
-                        if (userAvatar) userAvatar.src = user.photoURL;
-                        if (userName) userName.textContent = user.displayName;
-                        if (submitBtn) { submitBtn.textContent = 'Gửi bình luận'; submitBtn.classList.remove('login-required'); }
-                        if (commentInput) commentInput.placeholder = 'Viết bình luận của bạn...';
-                    } else {
-                        if (userBox) userBox.style.display = 'none';
-                        if (submitBtn) { submitBtn.textContent = 'Đăng nhập để bình luận'; submitBtn.classList.add('login-required'); }
-                        if (commentInput) commentInput.placeholder = 'Bạn cần đăng nhập để có thể bình luận.';
-                    }
-                });
-
-                if (logoutBtn) logoutBtn.addEventListener('click', () => auth.signOut());
-                
-                async function handleDeleteComment(button) {
-                    const commentId = button.getAttribute('data-comment-id');
-                    const authorId = button.getAttribute('data-author-id');
-                    const user = auth.currentUser;
-                    if (!user) { alert('Bạn cần đăng nhập để xóa bình luận.'); return; }
-                    const isAdmin = user.uid === adminUID;
-                    const isAuthor = user.uid === authorId;
-                    if (!isAdmin && !isAuthor) { alert('Bạn không có quyền xóa bình luận này.'); return; }
-                    try {
-                        await db.collection('comments').doc(commentId).delete();
-                        const repliesSnapshot = await db.collection('comments').where('parentId', '==', commentId).get();
-                        const batch = db.batch();
-                        repliesSnapshot.forEach(doc => { batch.delete(doc.ref); });
-                        await batch.commit();
-                        lastVisible = null;
-                        loadComments(currentSortOrder);
-                    } catch (error) { alert('Đã có lỗi xảy ra, không thể xóa bình luận.'); }
-                }
-
-                function handleCommentSubmit(text, parentId = null) {
-                    const user = auth.currentUser;
-                    if (user && text) {
-                        const commentData = {
-                            text: text, postId: postId, userId: user.uid,
-                            userName: user.displayName, userAvatar: user.photoURL,
-                            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                        };
-                        if (parentId) {
-                            commentData.parentId = parentId;
-                            commentsRef.doc(parentId).get().then(doc => {
-                                if (doc.exists) {
-                                    const parentComment = doc.data();
-                                    if (parentComment.userId !== user.uid) {
-                                        db.collection('users').doc(parentComment.userId).collection('notifications').add({
-                                            type: 'reply', commentId: parentId, replierName: user.displayName,
-                                            postId: postId, timestamp: firebase.firestore.FieldValue.serverTimestamp(), read: false
-                                        });
-                                    }
-                                }
-                            });
-                        }
-                        return commentsRef.add(commentData);
-                    }
-                    return Promise.reject("Người dùng chưa đăng nhập hoặc nội dung trống.");
-                }
-
-                if(commentForm) commentForm.addEventListener('submit', (e) => { e.preventDefault(); });
-
-                if(submitBtn) {
-                    submitBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        if (!auth.currentUser) { const provider = new firebase.auth.GoogleAuthProvider(); auth.signInWithRedirect(provider); return; }
-                        const text = commentInput.value.trim();
-                        if (!text) { commentInput.focus(); return; }
-                        submitBtn.disabled = true; submitBtn.textContent = 'Đang gửi...';
-                        handleCommentSubmit(text).then(() => { commentInput.value = ''; lastVisible = null; loadComments(currentSortOrder); }).finally(() => { submitBtn.disabled = false; submitBtn.textContent = 'Gửi bình luận'; });
-                    });
-                }
-
-                if(replyForm){
-                    replyForm.addEventListener('submit', (e) => {
-                        e.preventDefault();
-                        const text = replyInput.value.trim();
-                        const parentId = replyFormWrapper.getAttribute('data-parent-id');
-                        const replySubmitBtn = replyForm.querySelector('button[type="submit"]');
-                        replySubmitBtn.disabled = true; replySubmitBtn.textContent = 'Đang gửi...';
-                        handleCommentSubmit(text, parentId).then(() => { replyInput.value = ''; replyFormWrapper.style.display = 'none'; commentContainer.appendChild(replyFormWrapper); lastVisible = null; loadComments(currentSortOrder); }).finally(() => { replySubmitBtn.disabled = false; replySubmitBtn.textContent = 'Gửi trả lời'; });
-                    });
-                }
-
-                if(cancelReplyBtn){ cancelReplyBtn.addEventListener('click', () => { replyFormWrapper.style.display = 'none'; commentContainer.appendChild(replyFormWrapper); }); }
-
-                function loadComments(sortOrder) {
-                    let isInitialLoad = !lastVisible;
-                    if (isInitialLoad && !commentsList.querySelector('.comment-item')) { commentsList.innerHTML = '<div class="comment-loader"><div class="loader"></div></div>'; }
-                    let query = commentsRef.where('postId', '==', postId).orderBy('createdAt', sortOrder).limit(commentsPerPage);
-                    if (lastVisible && !isInitialLoad) { query = query.startAfter(lastVisible); }
-                    query.get().then(snapshot => {
-                        if (isInitialLoad) commentsList.innerHTML = '';
-                        if (isInitialLoad && commentCount) { commentsRef.where('postId', '==', postId).get().then(fullSnapshot => { commentCount.textContent = `(${fullSnapshot.size})`; }); }
-                        if (snapshot.empty && isInitialLoad) {
-                            commentsList.innerHTML = '<p style="text-align: center; color: var(--comment-text-meta); padding: 20px 0;">Chưa có bình luận nào. Hãy là người đầu tiên!</p>';
-                            const loadMoreContainer = document.getElementById('load-more-container');
-                            if (loadMoreContainer) loadMoreContainer.innerHTML = '';
-                            return;
-                        }
-                        lastVisible = snapshot.docs[snapshot.docs.length - 1];
-                        commentsRef.where('postId', '==', postId).orderBy('createdAt', sortOrder).get().then(fullSnapshot => {
-                            const allComments = fullSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                            const commentsByParent = allComments.reduce((acc, comment) => {
-                                const parentKey = comment.parentId || 'root';
-                                (acc[parentKey] = acc[parentKey] || []).push(comment); return acc;
-                            }, {});
-                            const renderCommentAndReplies = (comment, parentElement) => {
-                                const commentEl = document.createElement('div');
-                                commentEl.className = 'comment-item'; commentEl.setAttribute('data-comment-id', comment.id);
-                                const date = comment.createdAt ? comment.createdAt.toDate().toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Vừa xong';
-                                const isAdmin = comment.userId === adminUID;
-                                let processedText = comment.text.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, '<br>');
-                                const iconElements = document.querySelectorAll('.comment-icon');
-                                iconElements.forEach(icon => {
-                                    const markdown = icon.getAttribute('data-markdown'); const src = icon.getAttribute('data-src'); const alt = icon.getAttribute('alt');
-                                    const regex = new RegExp(markdown.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
-                                    processedText = processedText.replace(regex, `<img src="${src}" alt="${alt}" class="comment-embedded-icon" />`);
-                                });
-                                commentEl.innerHTML = `
-                                    <img src="${comment.userAvatar}" alt="${comment.userName}" class="comment-avatar"/>
-                                    <div class="comment-content">
-                                        <div class="comment-header"><span class="comment-author">${comment.userName} ${isAdmin ? "<span class='admin-badge'>Admin</span>" : ""}</span></div>
-                                        <div class="comment-text">${processedText}</div>
-                                        <div class="comment-meta"><span class="comment-date">${date}</span><button class="delete-btn" data-comment-id="${comment.id}" data-author-id="${comment.userId}">Xóa</button><button class="reply-btn" data-comment-id="${comment.id}">Trả lời</button></div>
-                                    </div>`;
-                                parentElement.appendChild(commentEl);
-                                const replies = commentsByParent[comment.id];
-                                if (replies && replies.length > 0) {
-                                    const repliesContainer = document.createElement('div'); repliesContainer.className = 'replies-container';
-                                    commentEl.querySelector('.comment-content').appendChild(repliesContainer);
-                                    replies.forEach(reply => renderCommentAndReplies(reply, repliesContainer));
-                                }
-                            };
-                            snapshot.docs.forEach(doc => { const commentData = { id: doc.id, ...doc.data() }; if(!commentData.parentId) { renderCommentAndReplies(commentData, commentsList); } });
-                        });
-                        const loadMoreContainer = document.getElementById('load-more-container');
-                        if (loadMoreContainer) {
-                            loadMoreContainer.innerHTML = '';
-                            if (snapshot.docs.length === commentsPerPage) {
-                                const loadMoreBtn = document.createElement('button'); loadMoreBtn.textContent = 'Tải thêm bình luận'; loadMoreBtn.id = 'load-more-btn';
-                                loadMoreBtn.addEventListener('click', () => { loadComments(currentSortOrder); });
-                                loadMoreContainer.appendChild(loadMoreBtn);
-                            }
-                        }
-                    }).catch(error => { commentsList.innerHTML = '<p>Không thể tải được bình luận.</p>'; });
-                }
-
-                if(sortNewestBtn) sortNewestBtn.addEventListener('click', () => { if (currentSortOrder === 'desc') return; currentSortOrder = 'desc'; sortNewestBtn.classList.add('active'); sortOldestBtn.classList.remove('active'); lastVisible = null; commentsList.innerHTML = ''; loadComments(currentSortOrder); });
-                if(sortOldestBtn) sortOldestBtn.addEventListener('click', () => { if (currentSortOrder === 'asc') return; currentSortOrder = 'asc'; sortOldestBtn.classList.add('active'); sortNewestBtn.classList.remove('active'); lastVisible = null; commentsList.innerHTML = ''; loadComments(currentSortOrder); });
-                
-                if(commentsList){
-                    commentsList.addEventListener('click', (e) => {
-                        if (e.target.classList.contains('delete-btn')) { handleDeleteComment(e.target); } 
-                        else if (e.target.classList.contains('reply-btn')) {
-                            if(!auth.currentUser) { alert('Bạn cần đăng nhập để trả lời.'); return; }
-                            const parentId = e.target.getAttribute('data-comment-id');
-                            const parentCommentElement = e.target.closest('.comment-item');
-                            replyFormWrapper.setAttribute('data-parent-id', parentId);
-                            parentCommentElement.appendChild(replyFormWrapper);
-                            replyFormWrapper.style.display = 'block'; replyInput.focus();
-                        }
-                    });
-                }
-                loadComments(currentSortOrder);
+    
+    if(window.location.pathname === '/') {
+        renderPopularPostsFromFirebase();
+        document.querySelectorAll(".tabx span").forEach(tab => {
+            tab.addEventListener("click", function() {
+                if (this.classList.contains('active')) return;
+                document.querySelectorAll(".tabx span").forEach(t => t.classList.remove("active"));
+                this.classList.add("active");
+                renderPopularPostsFromFirebase();
             });
-        }
-    }
-} catch (e) {}
-
-// 8. DỌN DẸP TIÊU ĐỀ
-document.addEventListener('DOMContentLoaded', function() {
-  try {
-    const titleElement = document.querySelector('body.pv h3.post-title.entry-title');
-    const altTitleElement = document.getElementById('tenkhac-target');
-    if (titleElement) { titleElement.querySelectorAll('*').forEach(child => { child.innerHTML = child.innerHTML.trim(); }); }
-    if (altTitleElement) { altTitleElement.innerHTML = altTitleElement.innerHTML.trim(); }
-  } catch (e) {}
-});
-
-// 9. LOGIN GOOGLE
-document.addEventListener('DOMContentLoaded', function() {
-    const checkFirebaseInterval = setInterval(function() {
-        if (typeof firebase !== 'undefined' && firebase.app()) {
-            clearInterval(checkFirebaseInterval);
-            runAuthLogic();
-        }
-    }, 100);
-
-    function runAuthLogic() {
-        const auth = firebase.auth();
-        const loginButton = document.getElementById('login-button');
-        const userProfileButton = document.getElementById('user-profile-button');
-        const userAvatar = document.getElementById('header-user-avatar');
-        const userDisplayName = document.getElementById('header-user-display-name');
-
-        if (loginButton) {
-            loginButton.addEventListener('click', () => {
-                const provider = new firebase.auth.GoogleAuthProvider();
-                auth.signInWithRedirect(provider).catch(error => alert("Lỗi đăng nhập: " + error.message));
-            });
-        }
-
-        auth.onAuthStateChanged(user => {
-            if (user) {
-                if(loginButton) loginButton.style.display = 'none';
-                if(userProfileButton) userProfileButton.style.display = 'flex';
-                if(userAvatar) userAvatar.src = user.photoURL;
-                if(userDisplayName) userDisplayName.textContent = user.displayName;
-            } else {
-                if(loginButton) loginButton.style.display = 'flex';
-                if(userProfileButton) userProfileButton.style.display = 'none';
-            }
         });
     }
-});
+}
 
-// 10. TOGGLE ICONS & POPUP
-document.addEventListener('DOMContentLoaded', function() {
-    try {
-        const toggleBtn = document.getElementById('toggle-icons-btn');
-        const iconsPanel = document.getElementById('comment-icons-panel');
-        if (toggleBtn && iconsPanel) {
-            toggleBtn.addEventListener('click', function() {
-                iconsPanel.style.display = (iconsPanel.style.display === 'none' || iconsPanel.style.display === '') ? 'flex' : 'none';
-            });
-        }
-    } catch (e) {}
-});
+// --- KHỞI CHẠY TẤT CẢ KHI TẢI TRANG XONG ---
+function runAllInits() {
+    initCollapsibleDescription();
+    updateAllTimeagoElements();
+    initLiveSearch();
+    fixUIAndExtraInfo();
+    
+    const observer = new MutationObserver(() => updateAllTimeagoElements());
+    observer.observe(document.body, { childList: true, subtree: true });
 
-function initPopup() {
-    const currentUrlPath = window.location.pathname;
-    if (currentUrlPath !== '/p/comments.html' && currentUrlPath !== '/p/dang-bai.html') {
-        const ads = ["https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEheT2XelbLK-1PAQrY-hn8NqFDTDvI9tGlqv74jhrz34t6alUR0WKTG6QMKmeNE7c1tQlpbwSC75cKGmSNQwhDdPBLmHs7AwxtHnEM9xvmHWtovwCvrW3Cv8Em9sbHPK8gSfqpj6Gl3pC9Q_M-5KcSImvDAsG8kZkh1KHzxJ1imDvuUkw/s1600/0730%20(2)(1).gif"];
-        function showPopup() {
-            const popup = document.getElementById("customPopup");
-            const overlay = document.getElementById("pageOverlay");
-            if (!popup || !overlay) return;
-            let lastClosed = parseInt(localStorage.getItem("popupLastClosed"), 10) || 0;
-            if (Date.now() - lastClosed >= 30 * 60 * 1000) {
-                document.getElementById("popupImage").src = ads[0];
-                popup.style.display = "block"; overlay.style.display = "block";
-            }
-        }
-        const popupImageElement = document.getElementById("popupImage");
-        if (popupImageElement) {
-            popupImageElement.onclick = function(event) {
-                event.stopPropagation();
-                localStorage.setItem("popupLastClosed", Date.now());
-                document.getElementById("customPopup").style.display = "none";
-                document.getElementById("pageOverlay").style.display = "none";
-                window.open(document.getElementById("popupLink").href, "_blank");
-            };
-        }
-        showPopup();
+    if (document.querySelector('.novel-label')) { 
+        createChapterLinksForAllNovelLabels();
+    } else if (document.querySelector('.labelpostmanga')) {
+        createChapterManga();
+    }
+
+    if (safeInitializeFirebase()) {
+        activateViewCounterAndPopular();
     }
 }
-if (typeof window.popupInitialized === 'undefined') {
-    window.popupInitialized = true;
-    document.addEventListener("DOMContentLoaded", initPopup);
+
+// Fix lỗi Load File Module bị trễ nhịp
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', runAllInits);
+} else {
+    runAllInits();
 }
