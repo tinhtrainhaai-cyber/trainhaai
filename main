@@ -1,5 +1,5 @@
 // =================================================================
-// === MAIN JS - BẢN VÁ LỖI TOÀN DIỆN CHO TRAINHAAI.XYZ ===
+// === MAIN JS - BẢN VÁ LỖI TOÀN DIỆN CHO TRAINHAAI ===
 // =================================================================
 
 // --- 1. TIỆN ÍCH DÙNG CHUNG ---
@@ -25,7 +25,22 @@ function getTimeAgo(dateString) {
     return date.getDate().toString().padStart(2, '0') + '/' + (date.getMonth() + 1).toString().padStart(2, '0') + '/' + date.getFullYear();
 }
 
-// --- 2. LOGIC MỤC LỤC (CREATE TOC) ---
+function insertAtCursor(myField, myValue) {
+    if (document.selection) {
+        myField.focus();
+        let sel = document.selection.createRange();
+        sel.text = myValue;
+    } else if (myField.selectionStart || myField.selectionStart == '0') {
+        let startPos = myField.selectionStart;
+        let endPos = myField.selectionEnd;
+        myField.value = myField.value.substring(0, startPos) + myValue + myField.value.substring(endPos, myField.value.length);
+        myField.selectionStart = myField.selectionEnd = startPos + myValue.length;
+    } else {
+        myField.value += myValue;
+    }
+}
+
+// --- 2. LOGIC MỤC LỤC TRUYỆN CHỮ ---
 async function createChapterLinksForNovelLabel(novelLabel) {
     const labelValue = novelLabel.getAttribute('label');
     if (novelLabel.dataset.loaded === 'true') return;
@@ -62,29 +77,83 @@ async function createChapterLinksForNovelLabel(novelLabel) {
     }
 }
 
-// --- 3. KHỞI CHẠY CÁC TÍNH NĂNG UI ---
+// --- 3. KHỞI CHẠY GIAO DIỆN VÀ DOM CONTENT ---
 function initAllFeatures() {
-    // Fix mô tả thu gọn
-    const des = document.getElementById('noidung-target');
-    if (des && document.body.classList.contains('pv')) {
-        const btn = des.nextElementSibling;
-        if (btn && btn.classList.contains('read-more-btn')) {
-            setTimeout(() => { if (des.scrollHeight > 100) { des.classList.add('is-needing-expansion'); btn.style.display = 'block'; } }, 500);
+    // A. Chuyển dữ liệu Mô tả, Tên khác
+    const noiDungElement = document.getElementById("noidung");
+    const synTargetElement = document.getElementById("noidung-target");
+    if (noiDungElement && synTargetElement) {
+        synTargetElement.innerHTML = noiDungElement.innerHTML;
+    }
+
+    const tenKhacElement = document.getElementById("tenkhac");
+    const tenKhacTargetElement = document.getElementById("tenkhac-target");
+    if (tenKhacElement && tenKhacTargetElement) {
+        const tenKhacParts = tenKhacElement.textContent.split(/[,;]/);
+        tenKhacTargetElement.innerHTML = tenKhacParts.map((part, index) => {
+            return `<span itemprop="workTitle">${part.trim()}</span>${index !== tenKhacParts.length - 1 ? (index === 0 ? ',' : ';') : ''}`;
+        }).join('');
+    }
+
+    // B. Cấu trúc lại HTML Tác giả/Họa sĩ/Lượt xem
+    const extraInfoElement = document.getElementById('extra-info');
+    const extraTargetElement = document.getElementById('extra-target');
+    const viewpostElement = document.querySelector('.viewpost');
+    if (extraInfoElement && extraTargetElement && viewpostElement) {
+        const asideContainer = extraTargetElement.closest('aside.s1');
+        const originalComplexRow = extraTargetElement.parentElement;
+        if (asideContainer && originalComplexRow) {
+            extraInfoElement.querySelectorAll(".y6x11p").forEach(row => {
+                const valueElement = row.querySelector(".dt");
+                const keyElement = row.childNodes[0];
+                if (keyElement && valueElement) {
+                    const keyText = keyElement.textContent.trim().toLowerCase();
+                    const valueText = valueElement.textContent.trim();
+                    let searchLabel = '';
+                    if (keyText === 'tác giả') searchLabel = 'Authors: ' + valueText;
+                    else if (keyText === 'họa sĩ') searchLabel = 'Artists: ' + valueText;
+                    if (searchLabel) {
+                        valueElement.innerHTML = `<a href="/search/label/${encodeURIComponent(searchLabel)}">${valueText}</a>`;
+                    }
+                }
+            });
+            Array.from(extraInfoElement.children).forEach(row => asideContainer.insertBefore(row, originalComplexRow));
+            
+            const dataId = viewpostElement.getAttribute('data-id');
+            originalComplexRow.classList.add('viewpost');
+            if (dataId) originalComplexRow.setAttribute('data-id', dataId);
+            while (viewpostElement.firstChild) originalComplexRow.appendChild(viewpostElement.firstChild);
+            viewpostElement.remove(); extraTargetElement.remove(); extraInfoElement.remove();
         }
     }
-    // Chạy Mục lục Novel
+
+    // C. Xử lý Cảnh báo xanh
+    const sourceDiv = document.getElementById('custom-warning-blue-content');
+    const placeholderDiv = document.getElementById('custom-warning-blue-placeholder');
+    if (sourceDiv && placeholderDiv) {
+        const svgIcon = `<svg viewBox="0 0 24 24" style="width: 24px; height: 24px; margin-right: 12px; flex-shrink: 0;"><path d="M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z" fill="currentColor"></path></svg>`;
+        placeholderDiv.innerHTML = svgIcon + '<p class="m-0" style="line-height: 1.5;">' + sourceDiv.innerHTML + '</p>';
+        placeholderDiv.classList.add('warning-box', 'warning-box-post-blue');
+        placeholderDiv.style.display = 'flex';
+    }
+
+    // D. Chạy Mục lục & Hiện nút "Đọc thêm"
     document.querySelectorAll('.novel-label').forEach(label => createChapterLinksForNovelLabel(label));
-    // Dọn rác tiêu đề
-    const title = document.querySelector('body.pv h3.post-title.entry-title');
-    if (title) title.querySelectorAll('*').forEach(c => c.innerHTML = c.innerHTML.trim());
-    // Timeago
+    if (synTargetElement && document.body.classList.contains('pv')) {
+        const btn = synTargetElement.nextElementSibling;
+        if (btn && btn.classList.contains('read-more-btn')) {
+            setTimeout(() => { if (synTargetElement.scrollHeight > 100) { synTargetElement.classList.add('is-needing-expansion'); btn.style.display = 'block'; } }, 500);
+        }
+    }
+
+    // E. Timeago tự động
     document.querySelectorAll('time.timeago').forEach(el => {
         const iso = el.getAttribute('datetime');
         if (iso) el.textContent = getTimeAgo(iso);
     });
 }
 
-// --- 4. HỆ THỐNG FIREBASE (VIEW/COMMENT/AUTH) ---
+// --- 4. HỆ THỐNG FIREBASE (VIEW/POPULAR/COMMENT/AUTH) ---
 function runFirebaseSystem() {
     const configEl = document.querySelector('.firebase-config-json');
     if (!configEl || typeof firebase === 'undefined') return;
@@ -92,26 +161,99 @@ function runFirebaseSystem() {
     if (!firebase.apps.length) firebase.initializeApp(JSON.parse(configEl.textContent));
     const auth = firebase.auth();
     const db = firebase.firestore();
-    const rtdb = firebase.database();
+    const rtdb = firebase.database(); // Realtime Database cho View Count
 
-    // Logic View Count
+    // A. Tính Lượt Xem (Post Detail)
     const viewEl = document.querySelector(".viewpost");
     if (viewEl) {
         const postId = viewEl.getAttribute("data-id");
-        const viewed = JSON.parse(sessionStorage.getItem('v_p') || '[]');
-        const postRef = rtdb.ref('views/' + postId);
-        if (!viewed.includes(postId)) {
-            postRef.transaction(curr => (curr || 0) + 1);
-            viewed.push(postId);
-            sessionStorage.setItem('v_p', JSON.stringify(viewed));
+        if (postId) {
+            const viewed = JSON.parse(sessionStorage.getItem('v_p') || '[]');
+            const postRef = rtdb.ref('views/' + postId);
+            if (!viewed.includes(postId)) {
+                postRef.transaction(curr => (curr || 0) + 1, (error, committed, snapshot) => {
+                    if(committed) {
+                         const count = snapshot.val();
+                         viewEl.querySelector('.view-count').textContent = count.toLocaleString('vi-VN');
+                         viewed.push(postId);
+                         sessionStorage.setItem('v_p', JSON.stringify(viewed));
+                    }
+                });
+            } else {
+                postRef.once('value').then(snap => {
+                    viewEl.querySelector('.view-count').textContent = (snap.val() || 0).toLocaleString('vi-VN');
+                });
+            }
         }
-        postRef.on('value', snap => {
-            const count = viewEl.querySelector(".view-count");
-            if (count) count.textContent = (snap.val() || 0).toLocaleString('vi-VN');
+    }
+
+    // B. Lượt xem danh sách (Trang chủ/Tìm kiếm)
+    function loadListViews() {
+        const viewAllElements = document.querySelectorAll('.viewall');
+        if(viewAllElements.length > 0) {
+            rtdb.ref('views').once('value').then(snapshot => {
+                const allViews = snapshot.val() || {};
+                viewAllElements.forEach(el => {
+                    const id = el.getAttribute('data-id');
+                    const countSpan = el.querySelector('.view-count');
+                    if(id && countSpan) {
+                        countSpan.textContent = (allViews[id] || 0).toLocaleString('vi-VN');
+                    }
+                });
+            });
+        }
+    }
+    loadListViews();
+    // Bắt MutationObserver để load lại view nếu danh sách được render thêm
+    new MutationObserver(() => loadListViews()).observe(document.body, { childList: true, subtree: true });
+
+    // C. Hệ thống truyện Phổ Biến (Popular Posts)
+    const popularContainer = document.getElementById('popular-posts-container');
+    if (popularContainer && window.location.pathname === '/') {
+        rtdb.ref('views').once('value').then(async viewsSnap => {
+            const allViews = viewsSnap.val() || {};
+            const response = await fetch('/feeds/posts/default/-/Series?alt=json&max-results=500');
+            const data = await response.json();
+            
+            let combinedData = (data.feed.entry || []).map(post => {
+                const postIdMatch = post.id.$t.match(/post-(\d+)/);
+                if (!postIdMatch) return null;
+                const postId = postIdMatch[1];
+                const content = post.content ? post.content.$t : '';
+                const imgMatch = content.match(/<img[^>]+src="([^">]+)"/);
+                
+                return {
+                    id: postId,
+                    title: post.title.$t,
+                    url: post.link.find(l => l.rel === 'alternate').href,
+                    thumbnail: post.media$thumbnail ? post.media$thumbnail.url.replace('/s72-c/', '/w58-h76-c/') : (imgMatch ? imgMatch[1] : 'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEixU5Y2M-2Q427Yl2sLyTe9N22M-k2-i60P-5-C2b-a-I7g-g-I-A/s1600/no-thumbnail.jpg'),
+                    labels: post.category ? post.category.map(c => c.term) : [],
+                    viewCount: allViews[postId] || 0
+                };
+            }).filter(Boolean);
+
+            combinedData.sort((a, b) => b.viewCount - a.viewCount);
+            const topPosts = combinedData.slice(0, 10);
+            
+            if(topPosts.length === 0) {
+                popularContainer.innerHTML = "<article class='p-y12x15'>Chưa có dữ liệu.</article>";
+                return;
+            }
+
+            popularContainer.innerHTML = topPosts.map((post, index) => `
+                <article class='p-y12x15 grid gtc-3c bb-1pxsf'>
+                    <div class='grid pcc'><div class='w-25 h25 tac lh-25px r2f'>${index + 1}</div></div>
+                    <div class='item-thumbnail'><a href='${post.url}'><img src='${post.thumbnail}' style='width:58px; height:75.85px; object-fit:cover; border-radius:2px;' loading='lazy'/></a></div>
+                    <div>
+                        <h3 class='post-title m-0 fs-13'><a class='clamp2' href='${post.url}'><strong>${post.title}</strong></a></h3>
+                        <div class='fs-12 popularview' style='margin-top: 5px;'><span class='carbon--view-filled'></span><span class='view-count'>${post.viewCount.toLocaleString('vi-VN')}</span></div>
+                    </div>
+                </article>
+            `).join('');
         });
     }
 
-    // Auth & Comment Logic (Gói gọn)
+    // D. Đăng nhập và Bình luận (Comment Logic)
     auth.onAuthStateChanged(user => {
         const loginBtn = document.getElementById('login-button');
         const profileBtn = document.getElementById('user-profile-button');
@@ -122,17 +264,29 @@ function runFirebaseSystem() {
                 document.getElementById('header-user-avatar').src = user.photoURL;
                 document.getElementById('header-user-display-name').textContent = user.displayName;
             }
+            // Logic cho Avatar khung bình luận
+            document.querySelectorAll('.comment-user-avatar').forEach(el => el.src = user.photoURL);
+            document.querySelectorAll('.comment-user-name').forEach(el => el.textContent = user.displayName);
+            document.querySelectorAll('[id^="comment-user-info"]').forEach(el => el.style.display = 'flex');
+        } else {
+            if(loginBtn) loginBtn.style.display = 'flex';
+            if(profileBtn) profileBtn.style.display = 'none';
+            document.querySelectorAll('[id^="comment-user-info"]').forEach(el => el.style.display = 'none');
         }
     });
 
-    // Sự kiện nút Login
     const btnL = document.getElementById('login-button');
     if(btnL) btnL.onclick = () => auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+    
+    const logoutBtns = document.querySelectorAll('[id^="logout-btn"]');
+    logoutBtns.forEach(btn => btn.onclick = () => auth.signOut());
 }
 
-// Kích hoạt khi trang sẵn sàng
+// --- 5. KÍCH HOẠT SAU KHI TRANG TẢI ---
 document.addEventListener('DOMContentLoaded', () => {
-    initAllFeatures();
+    initAllFeatures(); // Chạy DOM ngay lập tức
+    
+    // Đợi Firebase Load xong thư viện thì chạy Database
     const checkFB = setInterval(() => {
         if (typeof firebase !== 'undefined' && typeof firebase.database === 'function') {
             clearInterval(checkFB);
