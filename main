@@ -1,145 +1,31 @@
-// === FIREBASE IMPORTS ===
-import { initializeApp, getApp, getApps } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
-import { getDatabase, ref, get, runTransaction } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-database.js";
+// =================================================================
+// === MAIN JS - BẢN VÁ LỖI TOÀN DIỆN CHO TRAINHAAI.XYZ ===
+// =================================================================
 
-// --- 1. MÔ TẢ THU GỌN ---
-function initCollapsibleDescription() {
-    try {
-        const descriptionContainer = document.getElementById('noidung-target');
-        if (!descriptionContainer || !document.body.classList.contains('pv')) return;
-        const readMoreBtn = descriptionContainer.nextElementSibling;
-        if (!readMoreBtn || !readMoreBtn.classList.contains('read-more-btn')) return;
-        const collapsedHeight = 100;
-        setTimeout(function() {
-            if (descriptionContainer.scrollHeight > collapsedHeight) {
-                descriptionContainer.classList.add('is-needing-expansion');
-                readMoreBtn.style.display = 'block';
-            }
-        }, 500);
-    } catch (e) {}
-}
+// --- 1. TIỆN ÍCH DÙNG CHUNG ---
 window.toggleDescription = function(btn) {
     const descriptionContainer = document.getElementById('noidung-target');
     if (!descriptionContainer) return;
     descriptionContainer.classList.toggle('expanded');
     btn.textContent = descriptionContainer.classList.contains('expanded') ? 'Thu gọn' : 'Đọc thêm';
-}
+};
 
-// --- 2. THỜI GIAN & TIỆN ÍCH ---
-const CACHE = new Map();
 function getTimeAgo(dateString) {
     const date = new Date(dateString);
-    if (isNaN(date.getTime())) return "Không xác định";
+    if (isNaN(date.getTime())) return "Mới đây";
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const thatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const diffDays = Math.round((today - thatDay) / (1000 * 60 * 60 * 24));
-    const seconds = Math.floor((now - date) / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-
+    const diffDays = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(date.getFullYear(), date.getMonth(), date.getDate())) / 86400000);
+    const diffSecs = Math.floor((now - date) / 1000);
     if (diffDays < 7) {
-        if (seconds < 60) return `${seconds} giây trước`;
-        if (minutes < 60) return `${minutes} phút trước`;
-        if (hours < 24) return `${hours} giờ trước`;
-        return `${diffDays} ngày trước`;
-    } else {
-        const day = String(date.getDate()).padStart(2, '0');
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const year = date.getFullYear();
-        return `${day}/${month}/${year}`;
+        if (diffSecs < 60) return "vừa xong";
+        if (diffSecs < 3600) return Math.floor(diffSecs / 60) + " phút trước";
+        if (diffSecs < 86400) return Math.floor(diffSecs / 3600) + " giờ trước";
+        return diffDays + " ngày trước";
     }
-}
-function updateAllTimeagoElements() {
-    document.querySelectorAll('time.timeago').forEach(el => {
-        const isoDate = el.getAttribute('datetime');
-        if (isoDate && !el.dataset.timeagoApplied) {
-            el.textContent = getTimeAgo(isoDate);
-            el.dataset.timeagoApplied = 'true';
-        }
-    });
+    return date.getDate().toString().padStart(2, '0') + '/' + (date.getMonth() + 1).toString().padStart(2, '0') + '/' + date.getFullYear();
 }
 
-// --- 3. MỤC LỤC TRUYỆN TRANH ---
-function filterChapters(e) {
-    const filterText = e.target.value.toLowerCase();
-    document.querySelectorAll('#post-list .chapter-item').forEach(item => {
-        const chapterTitle = item.querySelector('span:first-child').textContent.toLowerCase();
-        item.style.display = chapterTitle.includes(filterText) ? '' : 'none';
-    });
-}
-function createChapterManga() {
-    const labelEl = document.querySelector('.labelpostmanga');
-    if(!labelEl) return;
-    const labelSeries = labelEl.getAttribute('label');
-    const maxResults = 150;
-    let latestPostLink = '';
-    let oldestPostLink = '';
-
-    async function loadAllPosts(startIndex) {
-        try {
-            const response = await fetch(`/feeds/posts/summary/-/${encodeURIComponent(labelSeries)}?start-index=${startIndex}&max-results=${maxResults}`);
-            const data = await response.text();
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(data, 'text/html');
-            const entries = Array.from(xmlDoc.getElementsByTagName('entry'));
-
-            if (entries.length === 0) {
-                if (startIndex === 1) createNavigationButtons();
-                showSearchInput();
-                return;
-            }
-
-            let postsHTML = '';
-            entries.forEach((entry) => {
-                if (Array.from(entry.getElementsByTagName('category')).some(cat => cat.getAttribute('term') === 'Series')) return;
-                const title = entry.getElementsByTagName('title')[0].textContent;
-                const postLink = entry.querySelector('link[rel="alternate"]')?.getAttribute('href');
-                const published = entry.getElementsByTagName('published')[0].textContent;
-                postsHTML += `<div class="chapter-item"><a href="${postLink}"><span>${title}</span><span>${getTimeAgo(new Date(published))}</span></a></div>`;
-                if (!latestPostLink) latestPostLink = postLink;
-                oldestPostLink = postLink;
-            });
-            document.getElementById('post-list').insertAdjacentHTML('beforeend', postsHTML);
-            if (entries.length === maxResults) {
-                await loadAllPosts(startIndex + maxResults);
-            } else {
-                createNavigationButtons();
-                showSearchInput();
-            }
-        } catch (error) {}
-    }
-    function createNavigationButtons() {
-        const navDiv = document.getElementById('navigation-buttons');
-        if(!navDiv) return;
-        navDiv.innerHTML = '';
-        if (oldestPostLink) navDiv.innerHTML += `<a href="${oldestPostLink}" class="navigation-link">Đọc từ đầu</a>`;
-        if (latestPostLink) navDiv.innerHTML += `<a href="${latestPostLink}" class="navigation-link">Đọc mới nhất</a>`;
-    }
-    function showSearchInput() {
-        const searchContainer = document.getElementById('search-container');
-        if(!searchContainer) return;
-        searchContainer.innerHTML = `<input type="text" id="search-input" placeholder="Tìm kiếm chương..." />`;
-        document.getElementById('search-input').addEventListener('input', filterChapters);
-    }
-    loadAllPosts(1);
-}
-
-// --- 4. MỤC LỤC TRUYỆN CHỮ (NOVEL) ---
-async function fetchWithCache(url) {
-    if (CACHE.has(url)) return CACHE.get(url);
-    const response = await fetch(url, { headers: { 'Accept-Encoding': 'gzip, deflate, br' } });
-    if (!response.ok) throw new Error('Network error');
-    const data = await response.json();
-    CACHE.set(url, data);
-    return data;
-}
-async function getPosts(label, startIndex) {
-    const url = `/feeds/posts/default/-/${label}?alt=json&max-results=150&start-index=${startIndex}`;
-    const data = await fetchWithCache(url);
-    return data.feed.entry || [];
-}
-function containsSeriesLabel(post) { return post.category.map(c => c.term).includes('Series'); }
+// --- 2. LOGIC MỤC LỤC (CREATE TOC) ---
 async function createChapterLinksForNovelLabel(novelLabel) {
     const labelValue = novelLabel.getAttribute('label');
     if (novelLabel.dataset.loaded === 'true') return;
@@ -149,6 +35,7 @@ async function createChapterLinksForNovelLabel(novelLabel) {
     nameNovelDiv.className = 'name-novel';
     nameNovelDiv.textContent = labelValue;
     const optionNovel = novelLabel.querySelector('.img-novel');
+    if (!optionNovel) return;
     novelLabel.insertBefore(nameNovelDiv, optionNovel);
 
     const chapterNovel = document.createElement('div');
@@ -156,301 +43,100 @@ async function createChapterLinksForNovelLabel(novelLabel) {
     optionNovel.appendChild(chapterNovel);
 
     let startIndex = 1;
-    let hasMorePosts = true;
-    while (hasMorePosts) {
-        const posts = await getPosts(labelValue, startIndex);
-        const filteredPosts = posts.filter(post => !containsSeriesLabel(post));
-        if (filteredPosts.length === 0 && startIndex === 1) {
-            chapterNovel.innerHTML = '<p class="no-novel-post">Không có chương nào.</p>';
-            break;
-        }
-        const postElements = filteredPosts.map(post => {
-            const link = post.link.find(l => l.rel === 'alternate');
-            const chapterLink = document.createElement('a');
-            chapterLink.href = link ? link.href : '#';
-            chapterLink.innerHTML = `<span>${post.title.$t}</span><span>${getTimeAgo(post.published.$t)}</span>`;
-            return chapterLink;
-        });
-        postElements.forEach(el => chapterNovel.appendChild(el));
-        hasMorePosts = posts.length === 150;
-        startIndex += 150;
-    }
-}
-async function createChapterLinksForAllNovelLabels() {
-    const novelLabels = document.querySelectorAll('.novel-label');
-    if (novelLabels.length === 0) return;
-    const parentContainer = novelLabels[0].parentNode;
-    const reversedLabels = [...novelLabels].reverse();
-    reversedLabels.forEach(label => parentContainer.appendChild(label));
-    await Promise.all(reversedLabels.map(label => createChapterLinksForNovelLabel(label)));
-}
-
-// --- 5. TÌM KIẾM TRỰC TIẾP ---
-function initLiveSearch() {
-    const searchInputs = document.querySelectorAll("input[name='q'][autocomplete='off']"); 
-    const resultsContainer = document.getElementById('live-search-results');
-    if (searchInputs.length === 0 || !resultsContainer) return;
-    let allPostsCache = [];
-    let isFetching = false;
-    let debounceTimer;
-
-    async function fetchAllPosts() {
-        if (isFetching || allPostsCache.length > 0) return;
-        isFetching = true;
+    let hasMore = true;
+    while (hasMore) {
         try {
-            const response = await fetch('/feeds/posts/summary/-/Series?alt=json&max-results=500');
+            const response = await fetch(`/feeds/posts/default/-/${encodeURIComponent(labelValue)}?alt=json&max-results=150&start-index=${startIndex}`);
             const data = await response.json();
-            allPostsCache = (data.feed.entry || []).map(entry => ({
-                title: entry.title.$t,
-                link: (entry.link.find(l => l.rel === 'alternate') || {}).href,
-                thumbnail: (entry.media$thumbnail ? entry.media$thumbnail.url.replace('/s72-c/', '/w72-h100-c/') : 'https://1.bp.blogspot.com/-_T_t_3FdbHw/Xo-L5qf_ACI/AAAAAAAABwE/f-w-U-b3IqYV1wGchPZgPA_h0w90y3Y4gCLcBGAsYHQ/s1600/no-image.png')
-            }));
-        } catch (error) {} finally { isFetching = false; }
+            const entries = data.feed.entry || [];
+            entries.filter(e => !e.category.some(c => c.term === 'Series')).forEach(post => {
+                const link = post.link.find(l => l.rel === 'alternate').href;
+                const a = document.createElement('a');
+                a.href = link;
+                a.innerHTML = `<span>${post.title.$t}</span><span>${getTimeAgo(post.published.$t)}</span>`;
+                chapterNovel.appendChild(a);
+            });
+            hasMore = entries.length === 150;
+            startIndex += 150;
+        } catch (e) { hasMore = false; }
     }
+}
 
-    function renderResults(posts, query) {
-        resultsContainer.innerHTML = '';
-        if (!posts || posts.length === 0) {
-            resultsContainer.innerHTML = `<div class="no-results">Không tìm thấy kết quả cho "${query}"</div>`;
-            resultsContainer.style.display = 'block'; return;
+// --- 3. KHỞI CHẠY CÁC TÍNH NĂNG UI ---
+function initAllFeatures() {
+    // Fix mô tả thu gọn
+    const des = document.getElementById('noidung-target');
+    if (des && document.body.classList.contains('pv')) {
+        const btn = des.nextElementSibling;
+        if (btn && btn.classList.contains('read-more-btn')) {
+            setTimeout(() => { if (des.scrollHeight > 100) { des.classList.add('is-needing-expansion'); btn.style.display = 'block'; } }, 500);
         }
-        const ul = document.createElement('ul');
-        posts.slice(0, 7).forEach(post => {
-            const li = document.createElement('li');
-            li.innerHTML = `<a href="${post.link}"><img src="${post.thumbnail}" alt="" class="search-result-img" loading="lazy"><span class="search-result-title">${post.title}</span></a>`;
-            ul.appendChild(li);
-        });
-        resultsContainer.appendChild(ul);
-        resultsContainer.style.display = 'block';
     }
-
-    searchInputs.forEach(input => { 
-        input.addEventListener('keyup', (e) => {
-            clearTimeout(debounceTimer); 
-            const query = e.target.value.toLowerCase().trim();
-            if (query.length < 2) { resultsContainer.style.display = 'none'; return; }
-            debounceTimer = setTimeout(() => {
-                renderResults(allPostsCache.filter(post => post.title.toLowerCase().includes(query)), query);
-            }, 300);
-        });
-        input.addEventListener('focus', fetchAllPosts);
-        input.addEventListener('focus', function() {
-            if (this.closest('#mobile-search-overlay')) this.closest('.search-box-container').appendChild(resultsContainer);
-            else this.closest('div[role="search"]').appendChild(resultsContainer);
-            if (this.value.length >= 2 && resultsContainer.innerHTML !== '') resultsContainer.style.display = 'block';
-        });
+    // Chạy Mục lục Novel
+    document.querySelectorAll('.novel-label').forEach(label => createChapterLinksForNovelLabel(label));
+    // Dọn rác tiêu đề
+    const title = document.querySelector('body.pv h3.post-title.entry-title');
+    if (title) title.querySelectorAll('*').forEach(c => c.innerHTML = c.innerHTML.trim());
+    // Timeago
+    document.querySelectorAll('time.timeago').forEach(el => {
+        const iso = el.getAttribute('datetime');
+        if (iso) el.textContent = getTimeAgo(iso);
     });
-    document.addEventListener('click', e => { if (!e.target.closest('.search-box-container, div[role="search"]')) resultsContainer.style.display = 'none'; });
 }
 
-// --- 6. SỬA GIAO DIỆN & TẠO LINK #EXTRA-INFO ---
-function fixUIAndExtraInfo() {
-    const noiDungElement = document.getElementById("noidung");
-    if (noiDungElement) {
-        const synTargetElement = document.getElementById("noidung-target");
-        if (synTargetElement) synTargetElement.innerHTML = noiDungElement.innerHTML;
-    }
-    const tenKhacElement = document.getElementById("tenkhac");
-    const tenKhacTargetElement = document.getElementById("tenkhac-target");
-    if (tenKhacElement && tenKhacTargetElement) {
-        const tenKhacParts = tenKhacElement.textContent.split(/[,;]/);
-        tenKhacTargetElement.innerHTML = tenKhacParts.map((p, i) => `<span itemprop="workTitle">${p.trim()}</span>${i !== tenKhacParts.length - 1 ? (i === 0 ? ',' : ';') : ''}`).join('');
-    }
+// --- 4. HỆ THỐNG FIREBASE (VIEW/COMMENT/AUTH) ---
+function runFirebaseSystem() {
+    const configEl = document.querySelector('.firebase-config-json');
+    if (!configEl || typeof firebase === 'undefined') return;
+    
+    if (!firebase.apps.length) firebase.initializeApp(JSON.parse(configEl.textContent));
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+    const rtdb = firebase.database();
 
-    const extraInfoElement = document.getElementById('extra-info');
-    const extraTargetElement = document.getElementById('extra-target');
-    const viewpostElement = document.querySelector('.viewpost');
-
-    if (extraInfoElement && extraTargetElement && viewpostElement) {
-        const asideContainer = extraTargetElement.closest('aside.s1');
-        const originalComplexRow = extraTargetElement.parentElement;
-        if (asideContainer && originalComplexRow) {
-            extraInfoElement.querySelectorAll(".y6x11p").forEach(row => {
-                const keyElement = row.childNodes[0];
-                const valueElement = row.querySelector(".dt");
-                if (keyElement && valueElement) {
-                    const keyText = keyElement.textContent.trim();
-                    const valueText = valueElement.textContent.trim();
-                    const searchLabel = keyText.toLowerCase() === 'tác giả' ? 'Authors: ' + valueText : (keyText.toLowerCase() === 'họa sĩ' ? 'Artists: ' + valueText : '');
-                    valueElement.innerHTML = searchLabel ? `<a href="/search/label/${encodeURIComponent(searchLabel)}">${valueText}</a>` : `<a href="/search?q=${encodeURIComponent(valueText)}&text=${encodeURIComponent(keyText)}">${valueText}</a>`;
-                }
-            });
-            Array.from(extraInfoElement.children).forEach(row => asideContainer.insertBefore(row, originalComplexRow));
-            
-            const dataId = viewpostElement.getAttribute('data-id');
-            const dataHref = viewpostElement.getAttribute('data-href');
-            const namePost = viewpostElement.getAttribute('name-post');
-            originalComplexRow.classList.add('viewpost');
-            if (dataId) originalComplexRow.setAttribute('data-id', dataId);
-            if (dataHref) originalComplexRow.setAttribute('data-href', dataHref);
-            if (namePost) originalComplexRow.setAttribute('name-post', namePost);
-            
-            while (viewpostElement.firstChild) originalComplexRow.appendChild(viewpostElement.firstChild);
-            viewpostElement.remove();
-            extraTargetElement.remove();
-            extraInfoElement.remove();
+    // Logic View Count
+    const viewEl = document.querySelector(".viewpost");
+    if (viewEl) {
+        const postId = viewEl.getAttribute("data-id");
+        const viewed = JSON.parse(sessionStorage.getItem('v_p') || '[]');
+        const postRef = rtdb.ref('views/' + postId);
+        if (!viewed.includes(postId)) {
+            postRef.transaction(curr => (curr || 0) + 1);
+            viewed.push(postId);
+            sessionStorage.setItem('v_p', JSON.stringify(viewed));
         }
-    }
-}
-
-// --- 7. FIREBASE & VIEW COUNT ---
-let db_rtdb; 
-let firebaseApp;
-function safeInitializeFirebase() {
-    try {
-        const configElement = document.querySelector('.firebase-config-json');
-        if (!configElement) throw new Error("Missing config.");
-        const firebaseConfig = JSON.parse(configElement.textContent.trim());
-        firebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-        db_rtdb = getDatabase(firebaseApp); 
-        return true;
-    } catch (e) {
-        document.querySelectorAll(".view-count").forEach(el => el.textContent = 'Lỗi FB');
-        return false;
-    }
-}
-function formatViewsCount(count) { return (isNaN(count) || count === null) ? "0" : parseInt(count).toLocaleString('vi-VN'); }
-
-async function handleViewPost() {
-    const viewElement = document.querySelector(".viewpost");
-    if (!viewElement || !db_rtdb) return;
-    const postId = viewElement.getAttribute("data-id");
-    if (!postId) return;
-    const viewedPosts = JSON.parse(sessionStorage.getItem('viewedPosts') || '[]');
-    const countElement = viewElement.querySelector(".view-count");
-    const postRef = ref(db_rtdb, `views/${postId}`);
-
-    if (!viewedPosts.includes(postId)) {
-        try {
-            await runTransaction(postRef, (currentData) => (currentData || 0) + 1);
-            viewedPosts.push(postId);
-            sessionStorage.setItem('viewedPosts', JSON.stringify(viewedPosts));
-        } catch (e) {}
-    }
-    try {
-        const snapshot = await get(postRef);
-        const viewCount = snapshot.val() || 1;
-        if(countElement) { countElement.textContent = formatViewsCount(viewCount); countElement.setAttribute("title", String(viewCount)); }
-    } catch (e) { if(countElement) countElement.textContent = 'Lỗi'; }
-}
-
-async function handleViewAll() {
-    const viewElements = document.querySelectorAll(".viewall");
-    if (viewElements.length === 0 || !db_rtdb) return;
-    try {
-        const viewsRef = ref(db_rtdb, 'views');
-        const snapshot = await get(viewsRef);
-        const allViews = snapshot.val() || {};
-        viewElements.forEach(element => {
-            const postId = element.getAttribute("data-id");
-            if(!postId) return;
-            const viewCount = allViews[postId] || 0;
-            const countElement = element.querySelector(".view-count");
-            if (countElement) { countElement.textContent = formatViewsCount(viewCount); countElement.setAttribute("title", String(viewCount)); }
-        });
-    } catch (e) {}
-}
-
-async function renderPopularPostsFromFirebase() {
-    const container = document.getElementById('popular-posts-container');
-    if (!container || !db_rtdb) return;
-    const allAllowedGenres = new Set(["ABO","Dị năng","Niên hạ","Crime","Cổ trang","18+","Oneshot","Ngược","Giải trí","Tận thế","Lãng mạn","Học đường","Philosophical","Kì ảo","Yêu hận","Châu âu","Xuyên không","Tâm lý","Giang hồ","Nhân thú","Superhero","Hối hận","Trùng sinh","Chủ nợ","Yaoi","Yuri","Hiện đại","Trả thù","Hài hước","Adaptation","NP","Boylove","Loli","Mafia","Kinh dị","Trinh thám","Reincarnation","Reverse Harem","Samurai","Đoản văn","Tu tiên","Giam cầm","Survival","Time Travel","Chiếm hữu","Video Games","Demon","Monsters","Đam mỹ","Virtual Reality","Demons","Monster Girls","Monsters","Police","Tình tay 3","Hệ thống"]);
-    try {
-        container.innerHTML = `<article class='p-y12x15' style='text-align: center;'><div class='loader'></div></article>`;
-        const viewsSnapshot = await get(ref(db_rtdb, 'views'));
-        const viewsData = viewsSnapshot.val() || {};
-        const postsResponse = await fetch('/feeds/posts/default/-/Series?alt=json&max-results=999');
-        const postsData = await postsResponse.json();
-        const combinedData = (postsData.feed.entry || []).map(post => {
-            const postIdMatch = post.id.$t.match(/post-(\d+)/);
-            if (!postIdMatch) return null;
-            const postId = postIdMatch[1];
-            return {
-                id: postId,
-                title: post.title.$t,
-                url: (post.link.find(l => l.rel === 'alternate') || {}).href,
-                thumbnail: (post.media$thumbnail) ? post.media$thumbnail.url.replace('/s72-c/', '/w58-h76-c/') : 'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEixU5Y2M-2Q427Yl2sLyTe9N22M-k2-i60P-5-C2b-a-I7g-g-I-A/s1600/no-thumbnail.jpg',
-                labels: post.category ? post.category.map(c => c.term) : [],
-                viewCount: viewsData[postId] || 0
-            };
-        }).filter(item => item !== null);
-
-        combinedData.sort((a, b) => b.viewCount - a.viewCount);
-        const topPosts = combinedData.slice(0, 10);
-        if (topPosts.length === 0) { container.innerHTML = `<article class='p-y12x15'>Chưa có dữ liệu.</article>`; return; }
-
-        let finalHTML = '';
-        topPosts.forEach((post, index) => {
-            const genres = post.labels.filter(label => allAllowedGenres.has(label)).slice(0, 3).map(label => `<a href="/search/label/${encodeURIComponent(label)}" rel="tag">${label}</a>`).join(', ');
-            finalHTML += `
-                <article class='p-y12x15 grid gtc-3c bb-1pxsf' role='article'>
-                    <div class='grid pcc'><div class='w-25 h25 tac lh-25px r2f'>${index + 1}</div></div>
-                    <div class='item-thumbnail'><a aria-label='${post.title}' href='${post.url}'><img alt='${post.title}' class='lazyload' data-src='${post.thumbnail}' style='width:58px; height:75.85px; object-fit:cover; border-radius:2px;' loading='lazy'/></a></div>
-                    <div>
-                        <h3 class='post-title m-0 fs-13'><a class='clamp2' href='${post.url}'><strong>${post.title}</strong></a></h3>
-                        <span class='span-spc fs-13' style="display: block; -webkit-line-clamp: 1;">${genres || ' '}</span>
-                        <div class='fs-12 popularview' style='margin-top: 2px;'><span class='carbon--view-filled'></span><span class='view-count' title='${post.viewCount}'>${formatViewsCount(post.viewCount)}</span></div>
-                    </div>
-                </article>`;
-        });
-        container.innerHTML = finalHTML;
-    } catch (e) { container.innerHTML = `<article class='p-y12x15' style='color:red;'>Lỗi tải danh sách phổ biến.</article>`; }
-}
-
-function activateViewCounterAndPopular() {
-    if (!db_rtdb) return;
-    const isPostPage = document.body.classList.contains('pv');
-    const isReadingPage = document.querySelector(".check-box, .novel-box");
-    if (isPostPage && !isReadingPage) handleViewPost();
-    handleViewAll();
-    
-    const mainContainers = document.querySelectorAll("#mainnnv, #results, #popular-posts-container");
-    if(mainContainers.length > 0) {
-        const observer = new MutationObserver((mutations) => {
-             for (const mutation of mutations) {
-                 if (mutation.type === 'childList' && mutation.addedNodes.length > 0) { handleViewAll(); break; }
-             }
-        });
-        mainContainers.forEach(container => observer.observe(container, { childList: true, subtree: true }));
-    }
-    
-    if(window.location.pathname === '/') {
-        renderPopularPostsFromFirebase();
-        document.querySelectorAll(".tabx span").forEach(tab => {
-            tab.addEventListener("click", function() {
-                if (this.classList.contains('active')) return;
-                document.querySelectorAll(".tabx span").forEach(t => t.classList.remove("active"));
-                this.classList.add("active");
-                renderPopularPostsFromFirebase();
-            });
+        postRef.on('value', snap => {
+            const count = viewEl.querySelector(".view-count");
+            if (count) count.textContent = (snap.val() || 0).toLocaleString('vi-VN');
         });
     }
+
+    // Auth & Comment Logic (Gói gọn)
+    auth.onAuthStateChanged(user => {
+        const loginBtn = document.getElementById('login-button');
+        const profileBtn = document.getElementById('user-profile-button');
+        if (user) {
+            if(loginBtn) loginBtn.style.display = 'none';
+            if(profileBtn) {
+                profileBtn.style.display = 'flex';
+                document.getElementById('header-user-avatar').src = user.photoURL;
+                document.getElementById('header-user-display-name').textContent = user.displayName;
+            }
+        }
+    });
+
+    // Sự kiện nút Login
+    const btnL = document.getElementById('login-button');
+    if(btnL) btnL.onclick = () => auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
 }
 
-// --- KHỞI CHẠY TẤT CẢ KHI TẢI TRANG XONG ---
-function runAllInits() {
-    initCollapsibleDescription();
-    updateAllTimeagoElements();
-    initLiveSearch();
-    fixUIAndExtraInfo();
-    
-    const observer = new MutationObserver(() => updateAllTimeagoElements());
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    if (document.querySelector('.novel-label')) { 
-        createChapterLinksForAllNovelLabels();
-    } else if (document.querySelector('.labelpostmanga')) {
-        createChapterManga();
-    }
-
-    if (safeInitializeFirebase()) {
-        activateViewCounterAndPopular();
-    }
-}
-
-// Fix lỗi Load File Module bị trễ nhịp
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', runAllInits);
-} else {
-    runAllInits();
-}
+// Kích hoạt khi trang sẵn sàng
+document.addEventListener('DOMContentLoaded', () => {
+    initAllFeatures();
+    const checkFB = setInterval(() => {
+        if (typeof firebase !== 'undefined' && typeof firebase.database === 'function') {
+            clearInterval(checkFB);
+            runFirebaseSystem();
+        }
+    }, 200);
+});
