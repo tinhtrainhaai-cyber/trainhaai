@@ -1,5 +1,5 @@
 // =================================================================
-// === MAIN JS - BẢN VÁ LỖI TOÀN DIỆN CHO TRAINHAAI ===
+// === MAIN JS - BẢN NON-MODULE (TƯƠNG THÍCH 100% VỚI THEME CŨ) ===
 // =================================================================
 
 // --- 1. TIỆN ÍCH DÙNG CHUNG ---
@@ -77,9 +77,9 @@ async function createChapterLinksForNovelLabel(novelLabel) {
     }
 }
 
-// --- 3. KHỞI CHẠY GIAO DIỆN VÀ DOM CONTENT ---
+// --- 3. KHỞI CHẠY GIAO DIỆN (DOM CONTENT) ---
 function initAllFeatures() {
-    // A. Chuyển dữ liệu Mô tả, Tên khác
+    // Chuyển dữ liệu Mô tả (Sửa lỗi mất Đọc Thêm)
     const noiDungElement = document.getElementById("noidung");
     const synTargetElement = document.getElementById("noidung-target");
     if (noiDungElement && synTargetElement) {
@@ -95,7 +95,7 @@ function initAllFeatures() {
         }).join('');
     }
 
-    // B. Cấu trúc lại HTML Tác giả/Họa sĩ/Lượt xem
+    // Cấu trúc lại HTML Tác giả/Họa sĩ/Lượt xem
     const extraInfoElement = document.getElementById('extra-info');
     const extraTargetElement = document.getElementById('extra-target');
     const viewpostElement = document.querySelector('.viewpost');
@@ -127,7 +127,7 @@ function initAllFeatures() {
         }
     }
 
-    // C. Xử lý Cảnh báo xanh
+    // Xử lý Cảnh báo xanh
     const sourceDiv = document.getElementById('custom-warning-blue-content');
     const placeholderDiv = document.getElementById('custom-warning-blue-placeholder');
     if (sourceDiv && placeholderDiv) {
@@ -137,33 +137,39 @@ function initAllFeatures() {
         placeholderDiv.style.display = 'flex';
     }
 
-    // D. Chạy Mục lục & Hiện nút "Đọc thêm"
+    // Chạy Mục lục & Hiện nút "Đọc thêm"
     document.querySelectorAll('.novel-label').forEach(label => createChapterLinksForNovelLabel(label));
     if (synTargetElement && document.body.classList.contains('pv')) {
         const btn = synTargetElement.nextElementSibling;
         if (btn && btn.classList.contains('read-more-btn')) {
-            setTimeout(() => { if (synTargetElement.scrollHeight > 100) { synTargetElement.classList.add('is-needing-expansion'); btn.style.display = 'block'; } }, 500);
+            setTimeout(() => { 
+                if (synTargetElement.scrollHeight > 100) { 
+                    synTargetElement.classList.add('is-needing-expansion'); 
+                    btn.style.display = 'block'; 
+                } 
+            }, 500);
         }
     }
 
-    // E. Timeago tự động
+    // Timeago tự động
     document.querySelectorAll('time.timeago').forEach(el => {
         const iso = el.getAttribute('datetime');
         if (iso) el.textContent = getTimeAgo(iso);
     });
 }
 
-// --- 4. HỆ THỐNG FIREBASE (VIEW/POPULAR/COMMENT/AUTH) ---
+// --- 4. HỆ THỐNG FIREBASE (GLOBAL FIREBASE CỦA THEME) ---
 function runFirebaseSystem() {
+    // Kiểm tra xem Firebase object có tồn tại trên window hay không
     const configEl = document.querySelector('.firebase-config-json');
-    if (!configEl || typeof firebase === 'undefined') return;
+    if (!configEl || typeof firebase === 'undefined' || typeof firebase.database !== 'function') return;
     
     if (!firebase.apps.length) firebase.initializeApp(JSON.parse(configEl.textContent));
+    
     const auth = firebase.auth();
-    const db = firebase.firestore();
-    const rtdb = firebase.database(); // Realtime Database cho View Count
+    const rtdb = firebase.database(); // Dùng Realtime Database cho View Count
 
-    // A. Tính Lượt Xem (Post Detail)
+    // A. Lượt Xem Chi Tiết Bài (Post View)
     const viewEl = document.querySelector(".viewpost");
     if (viewEl) {
         const postId = viewEl.getAttribute("data-id");
@@ -204,7 +210,6 @@ function runFirebaseSystem() {
         }
     }
     loadListViews();
-    // Bắt MutationObserver để load lại view nếu danh sách được render thêm
     new MutationObserver(() => loadListViews()).observe(document.body, { childList: true, subtree: true });
 
     // C. Hệ thống truyện Phổ Biến (Popular Posts)
@@ -253,7 +258,7 @@ function runFirebaseSystem() {
         });
     }
 
-    // D. Đăng nhập và Bình luận (Comment Logic)
+    // D. Đăng nhập và UI
     auth.onAuthStateChanged(user => {
         const loginBtn = document.getElementById('login-button');
         const profileBtn = document.getElementById('user-profile-button');
@@ -264,7 +269,6 @@ function runFirebaseSystem() {
                 document.getElementById('header-user-avatar').src = user.photoURL;
                 document.getElementById('header-user-display-name').textContent = user.displayName;
             }
-            // Logic cho Avatar khung bình luận
             document.querySelectorAll('.comment-user-avatar').forEach(el => el.src = user.photoURL);
             document.querySelectorAll('.comment-user-name').forEach(el => el.textContent = user.displayName);
             document.querySelectorAll('[id^="comment-user-info"]').forEach(el => el.style.display = 'flex');
@@ -284,9 +288,9 @@ function runFirebaseSystem() {
 
 // --- 5. KÍCH HOẠT SAU KHI TRANG TẢI ---
 document.addEventListener('DOMContentLoaded', () => {
-    initAllFeatures(); // Chạy DOM ngay lập tức
+    initAllFeatures();
     
-    // Đợi Firebase Load xong thư viện thì chạy Database
+    // Liên tục quét kiểm tra khi nào file thư viện firebase gốc (của theme) tải xong
     const checkFB = setInterval(() => {
         if (typeof firebase !== 'undefined' && typeof firebase.database === 'function') {
             clearInterval(checkFB);
